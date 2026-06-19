@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+# Ignore IDE settings
+.vscode/
+
+# Ignore automated test video artifacts
+**/*.mp4
+**/*.png
+logs/
+failures/
+client_secret*.json
