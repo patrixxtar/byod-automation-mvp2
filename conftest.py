@@ -4,7 +4,6 @@ import time
 from datetime import datetime
 from utils.shared_utils import BrowserContext, SeleniumFramework, set_file_name
 from configs.bell_config import DEVICE_PROFILES 
-from utils.gmail_api_util import fetch_otp_via_oauth
 
 
 def pytest_addoption(parser):
@@ -101,13 +100,3 @@ def pytest_runtest_makereport(item, call):
                 f.write(report.longreprtext)
                 
             print(f"\n📸 Failure detected! Screenshot & Traceback saved to: {screenshot_dir}")
-
-
-@pytest.fixture(scope="function")
-def get_email_otp():
-    def _get_otp(timeout=60):
-        # Fallback to Bell sender if CONFIG mapping doesn't exist
-        sender = CONFIG.get("OTP_SENDER_EMAIL", "noreply@bell.ca") if 'CONFIG' in globals() else "noreply@bell.ca"
-        return fetch_otp_via_oauth(sender_email=sender, timeout=timeout)
-        
-    return _get_otp
