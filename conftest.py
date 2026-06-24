@@ -83,20 +83,38 @@ def pytest_runtest_makereport(item, call):
 
     if report.when == "call" and report.failed:
         driver = getattr(item, "driver", None)
+        
+        screenshot_dir = Path.cwd() / "failures"
+        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        file_base = f"{item.name}_{timestamp}"
+        
         if driver:
-            screenshot_dir = Path.cwd() / "failures"
-            screenshot_dir.mkdir(parents=True, exist_ok=True)
-            
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            file_base = f"{item.name}_{timestamp}"
-            
-            # REQUIREMENT 4: Outputs failure log and screenshot simultaneously
             png_path = screenshot_dir / f"{file_base}.png"
-            txt_path = screenshot_dir / f"{file_base}.txt"
-            
             driver.save_screenshot(str(png_path))
             
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(report.longreprtext)
-                
-            print(f"\n📸 Failure detected! Screenshot & Traceback saved to: {screenshot_dir}")
+        txt_path = screenshot_dir / f"{file_base}.txt"
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(report.longreprtext)
+            
+        print(f"\n📸 Failure detected! Screenshot & Traceback saved to: {screenshot_dir}")
+        session_timestamp = datetime.now().strftime("%Y-%m-%d")
+        consolidated_log_path = screenshot_dir / f"failures_summary_{session_timestamp}.log"
+        
+        test_name = item.name
+        class_name = item.cls.__name__ if item.cls else item.module.__name__
+        message = str(report.longrepr.reprcrash.message) if hasattr(report.longrepr, 'reprcrash') else "No message provided."
+        details = report.longreprtext or "No traceback available."
+
+        log_entry = (
+            f"Test: {class_name}::{test_name} [FAILURE]\n"
+            f"Message: {message}\n"
+            f"Details:\n{details.strip()}\n"
+            f"{'-'*60}\n"
+        )
+
+        with open(consolidated_log_path, "a", encoding="utf-8") as log_file:
+            if consolidated_log_path.stat().st_size == 0:
+                log_file.write(f"=== PYTEST FAILURES LOG ({session_timestamp}) ===\n\n")
+            log_file.write(log_entry)

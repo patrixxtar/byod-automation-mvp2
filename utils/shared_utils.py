@@ -3,11 +3,12 @@ import threading
 import subprocess
 import glob
 import os
+import shutil
 from pathlib import Path
 from typing import Callable, Optional, List, Union, Tuple
 from pyvirtualdisplay import Display
 
-from selenium import webdriver
+from seleniumbase import Driver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -30,55 +31,41 @@ class BrowserContext:
         self.driver = None
 
     def start(self):
+
         self.display = Display(visible=0, size=self.display_size)
         self.display.start()
 
-        options = Options()
-
-        if self.mobile_emulation:
-            options.add_experimental_option("mobileEmulation", self.mobile_emulation)
-            args = [
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-features=WebPayments",
-                f"--app={self.target_url}",
-                f"--window-size={self.display_size[0]},{self.display_size[1]}"
-            ]
-        else:
-            args = [
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                f"--window-size={self.display_size[0]},{self.display_size[1]}",
-                "--start-maximized",
-                "--disable-features=WebPayments"
-            ]
-
-        # Explicitly bind Chromium to the PyVirtualDisplay display server port
+        args = [
+            "--disable-dev-shm-usage",
+            "--disable-features=WebPayments"
+        ]
+        
         if self.display.display is not None:
             args.append(f"--display=:{self.display.display}")
 
-        for a in args:
-            options.add_argument(a)
+        browser_path = (
+            shutil.which("google-chrome") or 
+            shutil.which("google-chrome-stable") or 
+            shutil.which("chromium") or 
+            shutil.which("chromium-browser")
+        )
 
-        prefs = {
-            "credentials_enable_service": False,
-            "profile.password_manager_enabled": False,
-            "autofill.credit_card_enabled": False,
-            "autofill.profile_enabled": False,
+        sb_kwargs = {
+            "uc": True,                      
+            "headless": False,               
+            "no_sandbox": True,
+            "window_size": f"{self.display_size[0]},{self.display_size[1]}",
+            "chromium_arg": ",".join(args),  # Pass custom args to SB as a comma-separated string
         }
 
-        options.add_experimental_option("prefs", prefs)
-        
-        # Modern approach to hide the "Chrome is being controlled by automated software" banner
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        self.driver = webdriver.Chrome(options=options)
+        if self.mobile_emulation:
+            sb_kwargs["mobile_emulator"] = True
+        self.driver = Driver(**sb_kwargs)
         self.wait = WebDriverWait(self.driver, 15)
-
-        if self.mobile_emulation is None and self.target_url:
-            self.driver.get(self.target_url)
+        if self.target_url:
+            self.driver.uc_open_with_reconnect(self.target_url, reconnect_time=4)
 
         return self
-
 
     def stop(self):
         if self.driver:
@@ -179,14 +166,13 @@ class PopupHandler:
     # =====================================================
     def dismiss(self, target):
         try:
-            # locator tuple -> resolve via stable_click
             if isinstance(target, tuple):
-                self.framework.stable_click(target, timeout=5, scroll=False)
-
-            # WebElement -> click directly via stable_click
+                short_wait = WebDriverWait(self.driver, 5)
+                element = short_wait.until(EC.presence_of_element_located(target))
             else:
-                self.framework.stable_click(target, timeout=5, scroll=False)
+                element = target
 
+            self.framework.stable_click(element, timeout=5, scroll=False)
             print("💥 Popup dismissed")
             return True
 
@@ -262,47 +248,88 @@ class SeleniumFramework:
     # -----------------------------------------------------
     def stable_click(self, locator_or_element, timeout=15, scroll=True):
         start = time.time()
-        print(f"Clicking element at: {locator_or_element}")
-        
+        print(f"Attempting stable click on: {locator_or_element}")
+
         while True:
             try:
-                # 1. Resolve Element
+                # Resolve element
                 if isinstance(locator_or_element, WebElement):
                     element = locator_or_element
                 else:
-                    element = self.wait.until(EC.element_to_be_clickable(locator_or_element))
+                    try:
+                        element = self.wait.until(
+                            EC.element_to_be_clickable(locator_or_element)
+                        )
+                    except Exception as e:
+                        if time.time() - start > timeout:
+                            print(
+                                f"ERROR: Element missing or not clickable after "
+                                f"{timeout}s: {locator_or_element}"
+                            )
+                            raise TimeoutException(
+                                f"Element not found: {locator_or_element}"
+                            ) from e
 
+                        print(
+                            f"Warning: Element not clickable yet. "
+                            f"Retrying locator: {locator_or_element}"
+                        )
+                        time.sleep(1)
+                        continue
+
+                # Scroll if requested
                 if scroll:
-                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                    time.sleep(2)
-                
-                self.flash_element(element)
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                        element
+                    )
+                    time.sleep(1)
 
-                # Tiered Click Strategy
+                # Flash for debugging
                 try:
-                    # Attempt 1: Native Click
+                    self.flash_element(element)
+                except Exception:
+                    pass
+
+                # Standard click
+                try:
                     element.click()
                     return
-                except Exception as native_err:
-                    # Attempt 2: ActionChains (Simulates user mouse movement)
-                    try:
-                        print(f"Native click failed, using ActionChains: {locator_or_element}")
-                        ActionChains(self.driver).move_to_element(element).click().perform()
-                        return
-                    except Exception:
-                        # Attempt 3: JavaScript Fallback (Executes immediately if Attempt 2 fails)
-                        try:
-                            print(f"ActionChains failed, forcing JS click: {locator_or_element}")
-                            self.driver.execute_script("arguments[0].click();", element)
-                            return
-                        except Exception:
-                            pass # Silently pass to let the while loop retry
-            
+                except Exception:
+                    print("Standard click failed, falling back to ActionChains.")
+
+                # ActionChains fallback
+                try:
+                    ActionChains(self.driver).move_to_element(element).click().perform()
+                    return
+                except Exception:
+                    print("ActionChains failed, falling back to JS click.")
+
+                # JS fallback
+                try:
+                    self.driver.execute_script("arguments[0].click();", element)
+                    return
+                except Exception as js_err:
+                    print(f"JS click failed: {js_err}")
+
+            except (
+                StaleElementReferenceException,
+                ElementClickInterceptedException,
+            ) as e:
+                if time.time() - start > timeout:
+                    raise Exception(
+                        f"All click strategies failed within {timeout}s. Last error: {e}"
+                    )
+
+                print(f"Retrying due to transient Selenium error: {e}")
+                time.sleep(1)
+
             except Exception as e:
                 if time.time() - start > timeout:
-                    raise Exception(f"Action failed after {timeout}s: {e}")
-                
-                # Prevent CPU spiking while looping
+                    raise Exception(
+                        f"All click strategies failed within {timeout}s. Last error: {e}"
+                    )
+
                 time.sleep(1)
     
     def wait_for_ready(self, timeout=15, stabilize_time=1.0, wait_for_modals=False):
@@ -351,6 +378,16 @@ class SeleniumFramework:
             """, element)
         except Exception:
             pass # Never let visual debugging break a test run
+
+    def bypass_captcha(self):
+        try:
+            print("🛡️ Attempting to bypass CAPTCHA using SeleniumBase...")
+            # Automatically detects and clicks Cloudflare/Turnstile checkboxes
+            self.driver.uc_gui_click_captcha() 
+            time.sleep(2)
+            print("✅ CAPTCHA bypass executed.")
+        except Exception as e:
+            print(f"⚠️ CAPTCHA bypass failed or none found: {e}")
 
     # -----------------------------------------------------
     # RECORDING API

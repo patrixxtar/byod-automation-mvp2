@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timezone, timedelta
 from selenium.webdriver.support import expected_conditions as EC
 
 class LandingNavigationFramework:
@@ -20,44 +21,128 @@ class LandingNavigationFramework:
         self.utils.popup_handler.dismiss(self.s["popups"]["cookie_banner"])
 
     def login_flow(self):
-        self.utils.stable_click(self.s["login"]["login_cta"])
+        mobile_menu = self.driver.find_element(*self.s["nav"]["mobile_menu"])
+        if mobile_menu.is_displayed():
+            self.utils.stable_click(mobile_menu)
+            self.utils.stable_click(self.s["login"]["mobile_login_cta"])
+        else:
+            self.utils.stable_click(self.s["login"]["desktop_login_cta"], scroll=False)
         
         username_input = self.wait.until(EC.visibility_of_element_located(self.s["login"]["username_input"]))
         username_input.clear()
+        time.sleep(1)
         username_input.send_keys(self.config["username"])
-        self.utils.stable_click(self.s["login"]["username_cta"])
+        self.utils.bypass_captcha()
+        username_cta = self.wait.until(EC.element_to_be_clickable(self.s["login"]["username_cta"]))
+        self.utils.stable_click(username_cta)
         
         
         password_input = self.wait.until(EC.visibility_of_element_located(self.s["login"]["password_input"]))
         password_input.clear()
         password_input.send_keys(self.config["password"])
-        self.utils.stable_click(self.s["login"]["password_cta"])
+        password_cta = self.wait.until(EC.element_to_be_clickable(self.s["login"]["password_cta"]))
+        self.utils.stable_click(password_cta)
 
 
     def complete_2fa(self):
-        print(f"Detecting if CIAM is needed...")
-        ciam_page = self.driver.find_element(*self.s["ciam"]["ciam_page"])
-        if ciam_page.is_displayed():
-            print(f"Executing CIAM 2FA process...")
+        print("Detecting if CIAM is needed...")
+        
+        # Using find_elements prevents a sudden exception if the page hasn't fully loaded
+        ciam_page_elements = self.driver.find_elements(*self.s["ciam"]["ciam_page"])
+        
+        if ciam_page_elements and ciam_page_elements[0].is_displayed():
+            print("Executing CIAM 2FA process...")
+
+            self.utils.stable_click(self.s["ciam"]["another_contact"])
+            self.wait.until(EC.visibility_of_element_located(self.s["ciam"]["another_contact_option"]))
+
+            email_option = self.wait.until(EC.element_to_be_clickable(self.s["ciam"]["email_option"]))
+            self.utils.stable_click(email_option)
+            time.sleep(2)
+
+            self.wait.until(EC.visibility_of_element_located(self.s["ciam"]["otp_input"]))
+
+
+            original_window = self.driver.current_window_handle
+            self.driver.switch_to.new_window('tab')
+
+            try:
+                # Call the helper method to do the heavy lifting
+                otp_code = self._fetch_otp()
+                print(f"✅ Successfully retrieved OTP: {otp_code}")
+
+            except Exception as e:
+                print(f"⚠️ Failed to fetch OTP from ssqa.digital: {e}")
+                self.driver.close()
+                self.driver.switch_to.window(original_window)
+                raise
+                
+            # Close the ssqa.digital tab and switch back to the CIAM tab
+            self.driver.close()
+            self.driver.switch_to.window(original_window)
+            
+            # Input the OTP into the CIAM page
+            otp_input = self.wait.until(EC.visibility_of_element_located(self.s["ciam"]["otp_input"]))
+            otp_input.clear()
+            otp_input.send_keys(otp_code)
+            
+            # Submit the 2FA form
+            self.utils.stable_click(self.s["ciam"]["otp_submit"])
+            print("✅ 2FA submission complete.")
 
         else:
             print(f"CIAM page not displayed, skipping...")
 
     def navigate_byod(self):
+        try:
+            offer_close = self.driver.find_element(*self.s["modals"]["offer_close"])
+            if offer_close.is_displayed():
+                self.utils.stable_click(offer_close)
+        except:
+            pass
+
         mobile_menu = self.driver.find_element(*self.s["nav"]["mobile_menu"])
         if mobile_menu.is_displayed():
             self.utils.stable_click(mobile_menu)
 
-        # Wait for navigation items to be clickable
+        try:
+            logout_cta = self.driver.find_element(*self.s["login"]["logout_cta"])
+            if logout_cta.is_displayed():
+                self.utils.stable_click(self.s["nav"]["mobility_btn"])
+        except:
+            pass
+
         self.utils.stable_click(self.s["nav"]["mobility_btn"])
         self.utils.stable_click(self.s["nav"]["plans_link"])
+
+    def bell_navigate_device(self):
+        mobile_menu = self.driver.find_element(*self.s["nav"]["mobile_menu"])
+        if mobile_menu.is_displayed():
+            self.utils.stable_click(mobile_menu)
+
+        try:
+            logout_cta = self.driver.find_element(*self.s["login"]["logout_cta"])
+            if logout_cta.is_displayed():
+                self.utils.stable_click(self.s["nav"]["mobility_btn"])
+        except:
+            pass
+
+        self.utils.stable_click(self.s["nav"]["mobility_btn"])
+        self.utils.stable_click(self.s["nav"]["device_link"])
+
+    def bell_device_sb(self, has_upc=False):
+        self._bell_select_device()
+        self._bell_handle_modals()
+        self.utils.wait_for_ready()
+        self.utils.popup_handler.start_background_monitor()
+        self.wait.until(EC.visibility_of_element_located(self.s["byod"]["imei_input"]))
 
     def bell_byod_sb(self, sim_type="esim", has_upc=False):
         self._bell_select_byod_plan()
         self._bell_handle_modals()
         self.utils.wait_for_ready()
         self.utils.popup_handler.start_background_monitor()
-        self.wait.until(EC.visibility_of_element_located(self.s["device"]["imei_input"]))
+        self.wait.until(EC.visibility_of_element_located(self.s["byod"]["imei_input"]))
         if has_upc:
             self._bell_process_upc()
             self._bell_dynamic_byod_plan()
@@ -94,6 +179,48 @@ class LandingNavigationFramework:
         time.sleep(3)
         self.utils.stable_click(self.s["cart"]["checkout_btn"])
 
+    def _fetch_otp(self):
+        self.driver.get("https://ssqa.digital")
+        email_input = self.wait.until(EC.visibility_of_element_located(self.s["ciam"]["email_input"]))
+        email_input.clear()
+        email_input.send_keys(self.config["username"])
+        self.utils.stable_click(self.s["ciam"]["open_inbox"])
+        self.wait.until(EC.presence_of_element_located(self.s["ciam"]["inbox_container"]))
+        time.sleep(1.5) 
+        
+        now_utc = datetime.now(timezone.utc)
+        
+        for attempt in range(3):
+            email_rows = self.driver.find_elements(*self.s["ciam"]["email_rows"])
+            
+            for row in email_rows:
+                try:
+                    # Extract the ISO date string
+                    date_el = row.find_element(*self.s["ciam"]["datetime"])
+                    email_date_str = date_el.get_attribute("data-date")
+                    email_time = datetime.fromisoformat(email_date_str)
+                    if now_utc - email_time <= timedelta(minutes=5):
+                        copy_btns = row.find_elements(*self.s["ciam"]["copy_code"])
+                        
+                        if copy_btns:
+                            copy_btn = copy_btns[0]
+                            self.utils.stable_click(copy_btn)
+                            return copy_btn.get_attribute("data-code")
+                except Exception:
+                    pass
+            
+            if attempt < 2:
+                print("Waiting for new email to arrive...")
+                time.sleep(5)
+                try:
+                    refresh_btn = self.driver.find_element(By.ID, "refreshBtn")
+                    self.utils.stable_click(refresh_btn)
+                    time.sleep(2)
+                except Exception:
+                    self.driver.refresh()
+                    self.wait.until(EC.presence_of_element_located(self.s["ciam"]["inbox_container"]))
+
+        raise Exception("No Verification Code email found within the last 5 minutes after polling.")
 
         
 
@@ -101,12 +228,12 @@ class LandingNavigationFramework:
 
     def _bell_select_byod_plan(self):
         plan_card = self.s["plans"]["plan_card"] 
-        carousel_next = self.s["plans"]["carousel_next"]
-        carousel_prev = self.s["plans"]["carousel_prev"]
+        carousel_next_locator = self.s["plans"]["carousel_next"]
+        carousel_prev = self.driver.find_element(*self.s["plans"]["carousel_prev"])
 
-        if carousel_prev.get_attribute("aria-disabled") == "true":
-            carousel_next = self.wait.until(EC.element_to_be_clickable(carousel_next))
-            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", carousel_btn)
+        if carousel_prev and carousel_prev.is_displayed():
+            carousel_next = self.wait.until(EC.presence_of_element_located(carousel_next_locator))
+            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", carousel_next)
             time.sleep(1)
         
         for attempt in range(6):
@@ -114,18 +241,18 @@ class LandingNavigationFramework:
                 plan_cards = self.driver.find_elements(*plan_card)
                 if plan_cards and plan_cards[0].is_displayed():
                     print(f"Found plan '{self.config['plan_name']}'!")
-                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", plan_card)
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", plan_cards[0])
                     time.sleep(2)
                     cta = plan_cards[0].find_element(*self.s["plans"]["plan_button"])
                     self.utils.stable_click(cta)
                     return
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Plan search attempt {attempt} failed: {e}")
             
-            carousel_next = self.wait.until(EC.element_to_be_clickable(carousel))
+            carousel_next = self.wait.until(EC.element_to_be_clickable(carousel_next_locator))
             if carousel_next.get_attribute("aria-disabled") == "true":
                 break
-            self.utils.stable_click(next_btn, scroll=False)
+            self.utils.stable_click(carousel_next, scroll=False)
             time.sleep(1.5)
                 
         raise Exception(f"Failed to find plan: {self.config['plan_name']}")
@@ -141,7 +268,7 @@ class LandingNavigationFramework:
 
     def _bell_process_upc(self):
         self.utils.wait_for_ready()
-        self.wait.until(EC.visibility_of_element_located(self.s["device"]["imei_input"]))
+        self.wait.until(EC.visibility_of_element_located(self.s["byod"]["imei_input"]))
         print("--- PROCESSING UPC CODE ---")
         if "upc_code" not in self.config:
             raise ValueError("UPC code missing from configuration.")
@@ -211,45 +338,45 @@ class LandingNavigationFramework:
     def _bell_configure_sim(self, sim_type="esim"):
         print(f"--- CONFIGURING SIM / IMEI FOR: {sim_type.upper()} ---")
         self.utils.wait_for_ready()
-        self.wait.until(EC.visibility_of_element_located(self.s["device"]["imei_input"]))
+        self.wait.until(EC.visibility_of_element_located(self.s["byod"]["imei_input"]))
 
         try:
-            find_imei = self.driver.find_element(*self.s["device"]["find_imei_link"])
+            find_imei = self.driver.find_element(*self.s["byod"]["find_imei_link"])
             if find_imei.is_displayed():
                 self.utils.stable_click(find_imei)
                 time.sleep(1)
                 
                 try:
-                    self.utils.stable_click(self.s["device"]["android_tab"], timeout=2)
+                    self.utils.stable_click(self.s["byod"]["android_tab"], timeout=2)
                     time.sleep(1)
-                    self.utils.stable_click(self.s["device"]["ios_tab"], timeout=2)
+                    self.utils.stable_click(self.s["byod"]["ios_tab"], timeout=2)
                     time.sleep(1)
                 except Exception:
                     pass
 
-                self.utils.stable_click(self.s["device"]["close_imei_modal"])
+                self.utils.stable_click(self.s["byod"]["close_imei_modal"])
         except Exception:
             pass
 
         self.utils.wait_for_ready()
-        self.wait.until(EC.invisibility_of_element_located(self.s["device"]["close_imei_modal"]))
+        self.wait.until(EC.invisibility_of_element_located(self.s["byod"]["close_imei_modal"]))
 
-        imei = self.wait.until(EC.visibility_of_element_located(self.s["device"]["imei_input"]))
+        imei = self.wait.until(EC.visibility_of_element_located(self.s["byod"]["imei_input"]))
         imei.clear()
         
         if sim_type == "psim":
-            self.utils.stable_click(self.s["device"]["psim_option"])
+            self.utils.stable_click(self.s["byod"]["psim_option"])
             self.utils.wait_for_ready()
-            self.utils.stable_click(self.s["device"]["psim_add_to_cart"])
+            self.utils.stable_click(self.s["byod"]["psim_add_to_cart"])
         else:
             imei.send_keys(self.config["esim_imei"])
             self.driver.execute_script("arguments[0].dispatchEvent(new Event('blur'));", imei)
 
             print("Waiting for IMEI validation...")
-            self.wait.until(EC.visibility_of_element_located(self.s["device"]["success_icon"]))
+            self.wait.until(EC.visibility_of_element_located(self.s["byod"]["success_icon"]))
             print("✅ IMEI validated!")
             self.utils.wait_for_ready()
-            self.utils.stable_click(self.s["device"]["add_to_cart"])
+            self.utils.stable_click(self.s["byod"]["add_to_cart"])
         
     def _bell_enter_cart(self):
         self.utils.wait_for_ready()

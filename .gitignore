@@ -10,3 +10,4 @@ __pycache__/
 logs/
 failures/
 client_secret*.json
+venv/

@@ -2,6 +2,8 @@ from selenium.webdriver.common.by import By
 
 CONFIG = {
     "target_url": "https://www.virginplus.ca/",
+    "username": "nbamvmtest",
+    "password": "Barca1234$",
     "plan_name": "60GB data, talk & text",
     "esim_imei": "357498198275732",
     "first_name": "Bqat",
@@ -23,10 +25,33 @@ SELECTORS = {
 
     "nav": {
         "mobile_menu": (By.XPATH, "//a[contains(@class, 'accss-mobile-menu-button')]"),
-        "login_cta": (By.XPATH, "//a[contains(@href, '/en/members-lounge/login.html')]"),
         "mobility_btn": (By.XPATH, "//div[@role='button' and contains(., 'Mobile')]"),
-        "plans_link": (By.XPATH, "//a[contains(@href, '/en/hot-offers/byop.html')]"),
+        "plans_link": (By.XPATH, "//a[contains(@href, 'hot-offers/byop.html')]"),
         "activate_now": (By.XPATH, "//a[text()='Select a plan' or text()='Activate now']")
+    },
+
+    "login": {
+        "desktop_login_cta": (By.XPATH, "//li[contains(@class, 'myaccount') and contains(@class, 'hide-on-narrow')]/a[@class='headlogin']"),
+        "username_input": (By.ID, "loginId"),
+        "username_cta": (By.ID, "login-button"),
+        "password_input": (By.ID, "password"),
+        "password_cta": (By.XPATH, "//button[contains(text(), 'Log in')]"),
+        "logout_cta": (By.XPATH, "//a[contains(@href, 'members-lounge/logout.html')]"),
+    },
+
+    "ciam": {
+        "ciam_page": (By.XPATH, "//h1[contains(text(), 'Confirm your identity')]"),
+        "another_contact": (By.XPATH, "//button[contains(text(), 'Use another contact method')]"),
+        "another_contact_option": (By.XPATH, "//h1[contains(text(), 'Select another contact method')]"),
+        "email_option": (By.XPATH, "//button[@value='email::1']"),
+        "otp_input": (By.ID, "code"),
+        "otp_submit": (By.XPATH, "//button[contains(text(), 'Submit')]"),
+        "email_input": (By.ID, "userInput"),
+        "open_inbox": (By.ID, "openInboxBtn"),
+        "inbox_container": (By.ID, "inbox-container"),
+        "email_rows": (By.XPATH, "//details[contains(@class, 'group')]"),
+        "datetime": (By.XPATH, ".//*[contains(@class, 'date-local')]"),
+        "copy_code": (By.XPATH, ".//button[contains(@class, 'copy-btn')]"),
     },
 
     "plans": {
@@ -36,6 +61,7 @@ SELECTORS = {
     },
 
     "modals": {
+        "offer_close": (By.ID, "//div[contains(@class, 'personalization-modal-container')]//button[contains(@class, 'personalization-modal-close')]"),
         "new_customer_btn": (By.ID, "addaline-newline-heading-link2"),
         "loading_overlay1": (By.XPATH, "//div[contains(text(), 'Determining')]"),
         "loading_overlay2": (By.XPATH, "//div[contains(text(), 'Loading')]")
